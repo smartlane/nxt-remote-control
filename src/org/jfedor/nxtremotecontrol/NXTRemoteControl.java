@@ -29,7 +29,6 @@ package org.jfedor.nxtremotecontrol;
  * 
  * tilt controls
  */
-
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -42,6 +41,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
+import android.os.StrictMode;
 import android.preference.PreferenceManager;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -57,6 +57,10 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.SeekBar.OnSeekBarChangeListener;
+
+
+
+import android.util.Log;
 
 public class NXTRemoteControl extends Activity implements OnSharedPreferenceChangeListener {
     
@@ -105,6 +109,9 @@ public class NXTRemoteControl extends Activity implements OnSharedPreferenceChan
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        //Log.i("NXT", "set strict");
+        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+        StrictMode.setThreadPolicy(policy);
         //Log.i("NXT", "NXTRemoteControl.onCreate()");
         
         requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
@@ -176,6 +183,7 @@ public class NXTRemoteControl extends Activity implements OnSharedPreferenceChan
             } else if ((action == MotionEvent.ACTION_UP) || (action == MotionEvent.ACTION_CANCEL)) {
                 mNXTTalker.motors((byte) 0, (byte) 0, mRegulateSpeed, mSynchronizeMotors);
             }
+            mNXTTalker.readSensor();
             return true;
         }
     }

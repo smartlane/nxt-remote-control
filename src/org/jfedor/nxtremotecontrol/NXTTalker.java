@@ -36,12 +36,98 @@ import android.bluetooth.BluetoothSocket;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
+
+import java.util.Date;
+import java.util.TimeZone;
+import java.text.SimpleDateFormat;
+import java.text.ParseException;
+
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.client.HttpClient;
+import org.apache.http.protocol.HTTP;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.HttpResponse;
+
+import org.json.JSONObject;
+import org.json.JSONArray;
+
+
 
 public class NXTTalker {
+
+    
+private void sendHttp() {
+            HttpClient client = new DefaultHttpClient();
+            HttpPost post = new HttpPost("https://smartlane.io/api/action/datastore_upsert");
+            post.setHeader("X-CKAN-API-Key",""); 
+            JSONObject jsonObj = new JSONObject();
+            try {
+            jsonObj.put("resource_id", "6f985bb4-3875-4a84-a0cb-97a0a23df94d");
+            jsonObj.put("force", true);
+            JSONArray records = new JSONArray();
+            for (int i=0;i<arrayPos;i++) {
+                JSONObject record = new JSONObject();
+                record.put("time", timevalues[i]);
+                record.put("speed", speedvalues[i]);
+                records.put(record);
+            }
+            arrayPos = 0;
+            jsonObj.put("records", records);
+            StringEntity entity = new StringEntity(jsonObj.toString(), HTTP.UTF_8);
+            entity.setContentType("application/json");
+            post.setEntity(entity);
+
+            HttpResponse response = client.execute(post);
+            }
+            catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+    static final String DATEFORMAT = "yyyy-MM-dd HH:mm:ss";
+
+public static Date GetUTCdatetimeAsDate()
+{
+    //note: doesn't check for null
+    return StringDateToDate(GetUTCdatetimeAsString());
+}
+
+public static String GetUTCdatetimeAsString()
+{
+    final SimpleDateFormat sdf = new SimpleDateFormat(DATEFORMAT);
+    sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+    final String utcTime = sdf.format(new Date());
+
+    return utcTime;
+}
+
+public static Date StringDateToDate(String StrDate)
+{
+    Date dateToReturn = null;
+    SimpleDateFormat dateFormat = new SimpleDateFormat(DATEFORMAT);
+
+    try
+    {
+        dateToReturn = (Date)dateFormat.parse(StrDate);
+    }
+    catch (ParseException e)
+    {
+        e.printStackTrace();
+    }
+
+    return dateToReturn;
+}
 
     public static final int STATE_NONE = 0;
     public static final int STATE_CONNECTING = 1;
     public static final int STATE_CONNECTED = 2;
+    
+    private double[] speedvalues = new double[1024];
+    private String[] timevalues = new String[1024];
+    private int arrayPos = 0;
+    
     
     private int mState;
     private Handler mHandler;
@@ -155,6 +241,21 @@ public class NXTTalker {
         
         data[5] = l;
         data[19] = r;
+        
+        timevalues[arrayPos] = GetUTCdatetimeAsString();
+        if (!(((int)l == 0) || ((int)r == 0))) { //Turning
+            double speed = (int)l;
+            speedvalues[arrayPos] = speed;
+        }
+        else speedvalues[arrayPos] = 0;
+        Log.d("buffer", timevalues[arrayPos]);
+        if (arrayPos<1024) arrayPos++;
+        else {
+            Log.e("ArrayOverflow", "No space left in array");
+            arrayPos = 0;
+        }
+        
+        
         if (speedReg) {
             data[7] |= 0x01;
             data[21] |= 0x01;
@@ -186,6 +287,13 @@ public class NXTTalker {
         write(data);
     }
     
+    public void readSensor() {
+        byte[] data = { 0x05, 0x00, (byte) 0x80, 0x05, 0x00, 0x01, 0x20};
+        write(data);
+        byte[] data2 = { 0x03, 0x00, (byte) 0x00, 0x07, 0x00};
+        byte[] readdata = write(data2);
+    }
+    
     public void motors3(byte l, byte r, byte action, boolean speedReg, boolean motorSync) {
         byte[] data = { 0x0c, 0x00, (byte) 0x80, 0x04, 0x02, 0x32, 0x07, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00,
                         0x0c, 0x00, (byte) 0x80, 0x04, 0x01, 0x32, 0x07, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00,
@@ -207,15 +315,26 @@ public class NXTTalker {
         write(data);
     }
     
-    private void write(byte[] out) {
+    private byte[] write(byte[] out) {
         ConnectedThread r;
         synchronized (this) {
             if (mState != STATE_CONNECTED) {
-                return;
+                return null;
             }
             r = mConnectedThread;
         }
-        r.write(out);
+        return r.write(out);
+    }
+    
+    private byte[] read() {
+        ConnectedThread r;
+        synchronized (this) {
+            if (mState != STATE_CONNECTED) {
+                return null;
+            }
+            r = mConnectedThread;
+        }
+        return r.read();
     }
     
     private class ConnectThread extends Thread {
@@ -299,6 +418,11 @@ public class NXTTalker {
             while (true) {
                 try {
                     bytes = mmInStream.read(buffer);
+                    sendHttp();
+                    Log.d("buffer", "sending http");
+                    if ((int)(buffer[12]) == -75) {
+                        stop();
+                    }
                     //toast(Integer.toString(bytes) + " bytes read from device");
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -308,13 +432,38 @@ public class NXTTalker {
             }
         }
         
-        public void write(byte[] buffer) {
+        public byte[] write(byte[] buffer) {
             try {
                 mmOutStream.write(buffer);
+                byte[] rbuffer = new byte[1024];
+                /*if (buffer[2] == 0x00) {
+                    try {
+                        int bytes = mmInStream.read(rbuffer);
+                        Log.d("available", Integer.toString(bytes));
+                    }
+                    catch (Exception e) {
+                        Log.d("available", "Exception!");
+                    }
+                }
+                */
+                return rbuffer;
             } catch (IOException e) {
                 e.printStackTrace();
                 // XXX?
             }
+            return null;
+        }
+        
+        public byte[] read() {
+            try {
+                byte[] buffer = new byte[1024];
+                mmInStream.read(buffer);
+                return buffer;
+            } catch (IOException e) {
+                e.printStackTrace();
+                // XXX?
+            }
+            return null;
         }
         
         public void cancel() {
